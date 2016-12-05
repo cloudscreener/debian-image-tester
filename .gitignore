@@ -3,3 +3,6 @@
 
 # Ignore local Vagrant directory
 /.vagrant
+
+# Ignore collected data
+/output
