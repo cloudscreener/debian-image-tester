@@ -23,6 +23,7 @@ require 'optparse'
 require 'ostruct'
 require 'pathname'
 require 'singleton'
+require 'set'
 
 gem 'net-ssh'
 require 'net/ssh'
@@ -323,6 +324,13 @@ class Prober
   include FileUtils
   include Singleton
 
+  IGNORES_DIRS = %w(/dev
+                    /home
+                    /run
+                    /tmp
+                    /vagrant
+                    /var/cache/apt/archives)
+
   STEPS = [
     { name: :sysctl_dump, cmd: 'sysctl -a', sudo: true, store: true },
     { name: :dpkg_list, cmd: 'dpkg -l', sudo: false, store: true },
@@ -332,10 +340,14 @@ class Prober
       store: true,
       nolog: true,
       filename: 'etc.tar.xz' },
-    { name: :install_cruft_and_debootstrap,
-      cmd: 'apt-get install -y cruft debootstrap',
+    { name: :install_cruft,
+      cmd: 'apt-get install -y cruft',
       sudo: true,
-      store: false }
+      store: false },
+    { name: :cruft,
+      cmd: "cruft --ignore '#{IGNORES_DIRS.join(' ')}' -d /",
+      sudo: true,
+      store: true }
   ]
 
   attr_reader :command_controller, :settings, :steps_data
@@ -345,11 +357,22 @@ class Prober
     @command_controller = CommandController.instance
     @settings = cc.settings
     @logger = cc.logger
+    @steps_data = {}
+  end
+
+  def base_packages_path
+    @bpp ||= settings.output_directory + "#{settings.debian_dist}_base_packages"
+  end
+
+  def base_packages_symbol
+    @bps ||= base_packages_path.basename.to_s.to_sym
   end
 
   def run!
+    @steps_data.clear
     initialize_output_directory!
-    @steps_data = {}
+    build_base_packages_list!
+
     begin
       STEPS.each { |step| run_step!(step) }
     rescue Exception => exception
@@ -363,6 +386,71 @@ class Prober
     @out_dir ||= settings.output_directory + settings.target_host
   end
 
+  def packages_diff_stats
+    packages_diff.map { |k, v| [k.to_sym, v.size ] }.to_h
+  end
+
+  def packages_diff
+    return @packages_diff if @packages_diff
+
+    raise 'no data collected' \
+      unless steps_data.key?(base_packages_symbol) && steps_data.key?(:dpkg_list)
+
+    official = SortedSet.new(steps_data[base_packages_symbol].split(' ').sort)
+    target =
+      SortedSet.new(steps_data[:dpkg_list].split("\n")
+                                          .map! do |line|
+                                            next if line !~ /^ii  ([0-9a-z+.-]+)(\s|:)/
+                                            Regexp.last_match(1)
+                                          end
+                                          .compact!
+                                          .sort!)
+    shared = target & official
+    unshared = target ^ official
+
+    @packages_diff = { official: official.to_a,
+                       target: target.to_a,
+                       shared: shared.to_a,
+                       unshared: unshared.to_a,
+                       added: (unshared & target).to_a,
+                       removed: (unshared & official).to_a }
+  end
+
+  def cruft_stats
+    cruft.map { |k, v| [k.to_sym, v.size ] }.to_h
+  end
+
+  def cruft
+    return @cruft if @cruft
+
+    raise 'no data collected' unless steps_data.key?(:cruft)
+
+    @cruft = Hash.new { |h, k| h[k] = [] }
+    key = nil
+
+    steps_data[:cruft].split("\n").each do |line|
+       case line
+       when /^---- (\w+(\s+\w+)*): [A-Za-z0-9_\/-] ----$/
+         key = Regexp.last_match(1).tr(' ', '_').to_sym
+       when /^(cruft report: .*|end\.|)$/
+       when /^    (.+)$/
+         @cruft[key] << Regexp.last_match(1).lstrip
+       else
+         raise "unparsable #{line.inspect}"
+       end
+    end
+
+    @cruft
+  end
+
+  def results
+    { cruft: cruft, packages_diff: packages_diff }
+  end
+
+  def reports
+    { cruft: cruft_stats, packages_diff: packages_diff_stats }
+  end
+
   private
 
   def log
@@ -372,10 +460,17 @@ class Prober
   def run_step!(hash)
     name = hash[:name]
     log.info("starting #{name} step…")
-    data = @steps_data[name] = cc.run_remote(hash[:cmd],
-                                             sudo: (hash[:sudo] || false),
-                                             nolog: (hash[:nolog] || false))
-    if hash[:store] == true
+
+    params = [hash[:cmd], { sudo: (hash[:sudo] || false),
+                            nolog: (hash[:nolog] || false) }]
+
+    data = @steps_data[name] =
+      hash[:local] ? cc.run_local(*params) : cc.run_remote(*params)
+
+    case hash[:store]
+    when :common
+      (settings.output_directory + (hash[:filename] || name.to_s)).write(data)
+    when true
       (store_directory + (hash[:filename] || name.to_s)).write(data)
     end
     log.info("#{name} step finished")
@@ -386,6 +481,23 @@ class Prober
       mkdir_p(store_directory)
       log.info("#{store_directory} created")
     end
+  end
+
+  def build_base_packages_list!
+    if base_packages_path.exist?
+      @steps_data[base_packages_symbol] = base_packages_path.read
+      return
+    end
+
+    cmd = %W(/usr/sbin/debootstrap
+             --print-debs
+             #{settings.debian_dist}
+             #{Pathname.new(Dir.tmpdir) + $PROGRAM_NAME}).join(' ')
+
+    STEPS.unshift({ name: base_packages_symbol,
+                    local: true,
+                    cmd: cmd,
+                    store: :common })
   end
 end
 
