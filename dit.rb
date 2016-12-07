@@ -262,7 +262,8 @@ class CommandController
   end
 
   def sanitize_cmd(cmd, sudo: @settings.sudo)
-    "LC_ALL=C LANG=C " + (sudo ? "sudo -E #{cmd}" : cmd)
+    'LC_ALL=C LANG=C DEBIAN_FRONTEND=noninteractive ' +
+      (sudo ? "sudo -E #{cmd}" : cmd)
   end
 
   def ssh_exec_cmd(ssh, cmd, nolog)
@@ -346,6 +347,14 @@ class Prober
       store: false },
     { name: :cruft,
       cmd: "cruft --ignore '#{IGNORES_DIRS.join(' ')}' -d /",
+      sudo: true,
+      store: true },
+    { name: :install_debsums,
+      cmd: 'apt-get install -y debsums',
+      sudo: true,
+      store: false },
+    { name: :debsums,
+      cmd: "debsums -a -c -l",
       sudo: true,
       store: true }
   ]
