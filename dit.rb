@@ -490,6 +490,7 @@ class Prober
     end
 
     cmd = %W(/usr/sbin/debootstrap
+             --include=openssh-server
              --print-debs
              #{settings.debian_dist}
              #{Pathname.new(Dir.tmpdir) + $PROGRAM_NAME}).join(' ')
