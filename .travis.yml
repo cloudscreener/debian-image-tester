@@ -1,0 +1,31 @@
+env:
+  global:
+    - secure: oG+QiLRyTK8xmcHozt81PoUmYsmNx7GGkMas8UaX8DhL+c4EqZK5O2vzdsHL2nMsKIgWsA9CxuZ142EEJalvgze4wag/yx4+905FwV/9ki5/sZ4YPrrq/Lp6OouN0kMLA1cT/FZE+dofxaT97w1BhcnqK8QheygAgNQ4kv6xTG9GUhwv2PXPbJ+N9Oqm4LaOO3qnjqAW/5glc+jfU6fbKTMMAa+umpL5izStZFcb1LbK/Q9h2RHm8mQjEdfwzp7T/BEiLml3rLaNrXQKKOnSyDt+KuqPST7uLvqdyv9L1vEmpqPRmGfdFR5+VSkRz6uZbl2yEI8+w/Ln5JyT7s8q0XGEoqyP56LtAjxoHqpHJmA9obdU9VZZ89VU6SWNilwfFtL6haYki8D4pxlgM5wMzrreQ+cmczMlBsp6TLT5cM/qT7sNRoIBdi+IoeV8q59nOBmgBGOOHu8B/xIOxxlaW5wZiFEpAHRjIc83LeJoWQeUNRaDF/gqtfrDzTwIkdvtr5YRhmV92om7BS6uSAH8NVorWv+J+F0tQ8G1B+jeu6fJ+DHqt5lH3oPUG9z5CaGNFW8ahHAeomWgdUZq3bSswQXDZ+8mx4vM9+gPj6SVf0QBIKDBBiFCUu1nERQeuK3ony9YgQOCNjYEUZPUliL3I8MHzADoX0WByhL+h7cqEPY=
+    - secure: BW44RxSrxOyr5gftSdHn4/iBRFnrvjf/KUAkY9XlHXU+j+Ax8G0wflZUYqBfwa0BA2GBL1fstZFGt6p8RUkLEV1vrV3PsmpSHYKwQLBjoL4Mpc7SbGE8SKHSq9jBQq+MNYSPCFPpv9Y+bM9mjPc5ljHtvhRAoZshfTPdStfgO++z2Ec85wFaauJ+vs+kcCYSd6D+2XU22pAfi33BLjixgbKRAdQiQ8v3FZvGxBso7ZFkKwpHTap51WS+S9BhHUMk8Bz4Wy/OvYACZME9LzHI12cDFzNMGZHnwtGM1CEbZZHeMws9nRG8yNnqJHYOIkx5QzUNa2lH8fDYaoRXazQqQUMqSZ5iaoGi32unfF6m6vVdgUDgjleUK3VxMrfvpDtfrlwAgEIahKZSs5jQT3G59cT5TBZ4zQ43ytTEz+V/+WQY1eW6NAlCthS6okLuo/IP2S6cFXSPKHYjwKV0/vUMlwL5WoVhQkbUHnL+9jcJtwv6GVoZv94mBzwI0lkUajOKofb5Mm6M5AcvuoUSiZdYGgE6i+PjGzqTGNepWEc65lfyyB1LP7dxhWnoVJ0RJk9i5rJL6KO0yTNZFoyIAlwEbmpcsWNZzc0dLBjkxrTe/UVBH9rEWW7ovuJvmtB1EcW00y8wlZ+5wBHMDjb+NPwl7OnhPMSHRgF+AXvB4HqMY5Y=
+    - secure: dcxrWLuEXXvSYn/1ZfYROAWgMQKo9LVn7nOR4tV429KKtV4LVGfTn0WTQQd5E1oay3hfeRS/RR0bIlpGNfvZHoJXq0WGBNyhAHnEepM7DdUqlx4+kFBoTaNm3AdoE1OULGoDXMPMklYH/ApM+kPF58Rf582oU8Xkn9QBz3iuZRenXPY01mu5Da3nKLkf4NR2Ks3Z9pGPNcLWHHzDxGFiaZlTrVgFjo97mxGa0XTiKvZWz41lwKCoGW80EYH1ZD+WjirnBuKKy0KDhnmZ1NHlBu4rWiWU8vOBc8QCwkRG16qRzW98L+LnKE8qiNhlu8CiJc1XP8sE6sZ0rq0H7qGL1gUREpODqVJDa4I/Xhl3BIrRGjguXQI5uW7ZExUZzCVrkzOwygx+bw2H9Yx7Hx/VPFZubXjHl+UnyYK+NqaHX+ayIm9uFzHGGQ/zG6PFcNSdxJOyshnNZxh+TgNF0BZYdaC6TPZbBi8x6luqnFzTSC8T9gLWaHmINipOTinvdVvZTRs8Q27/4jcq/ha8Y6Tks8BQhJIk+gKf1l27rbBA0Mzmz56EgmfkXxBWrwOxqEWtJYInQlU+n3I5nVNY9Venn7ftb+Ma/x0dV9RaPgrrckIvoMJqJpBFP4dG6LcNKUBtBqeDvDnd7XytWFPWrS6Pd3kaERKCQONNMOfR+R6V5r4=
+sudo: required
+language: ruby
+services:
+  - docker
+before_install:
+  - sudo apt-get update
+  - sudo apt-get install -o Dpkg::Options::="--force-confold" --force-yes -y docker-engine
+  - docker-compose --version
+  - echo $DOCKER_EMAIL $DOCKER_USERNAME
+  - docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
+  - docker-compose pull || true
+  - docker-compose build
+script:
+  - ls -laFh
+  - "docker-compose run --rm ruby ruby -rsocket -e \"s=Socket.new(:INET,:STREAM);r=Socket.sockaddr_in(22,'base');s.connect(r) ? puts('Ok') : puts('NoOk')\""
+  - docker ps -a
+  - docker-compose run --rm ruby ssh -v vagrant@base uptime
+  - echo exit | docker-compose run --rm ruby ./dit.rb -v -d -o /tmp/output vagrant@base
+notifications:
+  slack:
+    rooms:
+    - secure: Btps1FQr6Wd7PXYqLeKCB/Q0DeIH+ILkXfGmT9s+TuZRzWxUbWs8lJBKsXhwuNNBiAjTc70tDGjK9H0I04xJQoPgujYvrcnEdPUaq65DZuGUBHrQpJz6huUVhvYQtJu3+YH2rGg4qOKPjCCLcqFYETZ5aHe1vykesbHfKtijtv3cnezuc6mVMBK9Fymt966LlEjr9w82vMec5r2NTZCUK7s4uXEaqiLszsLzdavdCcidQP5/3JgMG3xVCT1j9v2nDSIJ/OFWRyEkFOZwQl3qN3aUv2wVKdMM9DsMc52rp2UdTH7E4GLpZkuQMUHQ4TW5TAEfn5W7qoCeNWzO61Szdb5Os9C8X+eVBB3puhStEI0fQnlvLw3NzciRg+D8166bAs5A/Jv4qNDkOmZSJA3NZm7PEu8WsGQQn4MvIIZrJXvxNGG6h2L1zx2VyhoO7meSf3W2UKmPcFVywNKff0XQVAPjbAPXDu0MmQO9ZAGvczzLjWJ3K4JFhnj9E2rjpuuDU4SMv9ioAR9ksw/jX++SJ4DasMTFsDIB2+ooVF4CBNFCvYgZB3cUsaeja3KQbUP+u2+EiP58SlLHLIY4rOZjzeahEQLeXjhK4PnBSpoHOeHlGeCOmO4najU9OjxzYEwYYx7tRJd+gRPQ+xXvB7ZuOxBM1wOtCBJF9bpXUlkqMXM=
+after_success:
+- if [ "$TRAVIS_BRANCH" == "master" ]; then docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME"
+  -p="$DOCKER_PASSWORD"; docker push cloudscreener:dit_vagrant_unsecure_sshd; docker
+  push cloudscreener:dit_vagrant_ruby_ssh_debootstrap; fi

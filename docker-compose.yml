@@ -1,0 +1,36 @@
+---
+version: '2'
+services:
+  base:
+    build:
+      context: .
+      args:
+        DEB_DIST: jessie
+      dockerfile: .vagrant_unsecure_sshd.Dockerfile
+    image: cloudscreener:dit_vagrant_unsecure_sshd
+    expose:
+      - 22/tcp
+    # networks:
+    #   - local
+    domainname: local
+    hostname: base
+  ruby:
+    build:
+      context: .
+      args:
+        DEB_DIST: jessie
+      dockerfile: .vagrant_ruby_ssh_debootstrap.Dockerfile
+    image: cloudscreener:dit_vagrant_ruby_ssh_debootstrap
+    # networks:
+    #   - local
+    domainname: local
+    hostname: ruby
+    links:
+      - base
+    volumes:
+      - .:/opt/debian-image-tester:ro
+    user: vagrant
+    working_dir: /opt/debian-image-tester
+# networks:
+#   local:
+#     driver: bridge

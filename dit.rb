@@ -11,10 +11,7 @@
 # frozen_string_literal: true
 # encoding: UTF-8
 
-BEGIN {
-  $PROGRAM_NAME = File.basename(__FILE__).gsub(/\.rb$/, '')
-  START_TIME = Time.now
-}
+BEGIN { START_TIME = Time.now }
 
 require 'fileutils'
 require 'logger'
@@ -31,7 +28,7 @@ require 'net/ssh'
 VERSION = '0.0.1 alpha'
 
 class CustomLogger < Logger
-  def initialize(logdev = STDOUT, **args)
+  def initialize(logdev = STDERR, **args)
     super(logdev, args)
 
     self.level = Logger::WARN
@@ -71,6 +68,9 @@ class CustomLogger < Logger
 end
 
 class Settings < OpenStruct
+  USER_HOST_RG = /^(([a-z0-9_-]+(\.[a-z0-9_-]+)*)@([a-z0-9_-]+(\.[a-z0-9_-]+)*)|
+                    vagrant)$/x
+
   def self.parse!(args, logger)
     settings = self.new
     settings.logger = logger
@@ -94,9 +94,10 @@ Copyright © 2016 Cloudscreener SAS, MIT License (see LICENSE file).
 Author(s):
   Laurent Vallar <laurent@cloudscreener.com>
 
-Usage: #{opts.program_name} [options] target_host
-  Where target_host is the remote host name used by ssh command.
-  When 'vagrant' is specified as target_host, 'vagrant ssh-config' will
+Usage: #{opts.program_name} [options] user@host
+  Where <host> is the remote host name of fqdn used by ssh command and
+  <user> is the login.
+  When 'vagrant' is specified in place of <user@host>, 'vagrant ssh-config' will
   be used.
 
       EOS
@@ -142,10 +143,11 @@ Usage: #{opts.program_name} [options] target_host
     settings.banner = "#{settings.option_parser.to_s}\n"
 
     args = settings.option_parser.parse!(args)
-    settings.error("wrong target_host argument: #{args.inspect}") \
-      unless args.size == 1
+    settings.error("wrong user@host argument: #{args.inspect}") \
+      if args.size != 1 || !args.first.match(USER_HOST_RG)
 
-    settings.target_host = args.first
+    settings.user = Regexp.last_match(2)
+    settings.host = Regexp.last_match(4) || Regexp.last_match(1)
     settings.output_directory ||= (Pathname.new(__dir__) + 'output')
     settings
   end
@@ -230,7 +232,7 @@ class CommandController
   end
 
   def build_ssh_opts
-    return [@settings.target_host] unless @settings.target_host == 'vagrant'
+    return [@settings.host, @settings.user] unless @settings.host == 'vagrant'
 
     config = vagrant_ssh_config
     [ config[:host_name],
@@ -336,11 +338,11 @@ class Prober
     { name: :sysctl_dump, cmd: 'sysctl -a', sudo: true, store: true },
     { name: :dpkg_list, cmd: 'dpkg -l', sudo: false, store: true },
     { name: :etc_tarball,
-      cmd: 'tar cfJ - /etc',
+      cmd: 'tar cfz - /etc',
       sudo: true,
       store: true,
       nolog: true,
-      filename: 'etc.tar.xz' },
+      filename: 'etc.tgz' },
     { name: :install_cruft,
       cmd: 'apt-get install -y cruft',
       sudo: true,
@@ -392,7 +394,7 @@ class Prober
   end
 
   def store_directory
-    @out_dir ||= settings.output_directory + settings.target_host
+    @out_dir ||= settings.output_directory + settings.host
   end
 
   def packages_diff_stats
@@ -502,7 +504,7 @@ class Prober
              --include=openssh-server
              --print-debs
              #{settings.debian_dist}
-             #{Pathname.new(Dir.tmpdir) + $PROGRAM_NAME}).join(' ')
+             #{Pathname.new('/tmp') + $PROGRAM_NAME}).join(' ')
 
     STEPS.unshift({ name: base_packages_symbol,
                     local: true,
@@ -511,8 +513,17 @@ class Prober
   end
 end
 
-prober = Prober.instance
+if __FILE__ == $0
+  prober = Prober.instance
+  steps = prober.run!
 
-gem 'pry'
-require 'pry'
-Pry.start
+  require 'json'
+  puts JSON.pretty_generate({
+    steps: steps,
+    results: prober.results,
+    reports: prober.reports
+  })
+
+  require 'pry'
+  Pry.start
+end
