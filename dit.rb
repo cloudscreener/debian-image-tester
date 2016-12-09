@@ -21,6 +21,7 @@ require 'ostruct'
 require 'pathname'
 require 'singleton'
 require 'set'
+require 'securerandom'
 
 gem 'net-ssh'
 require 'net/ssh'
@@ -28,6 +29,15 @@ require 'net/ssh'
 VERSION = '0.0.1 alpha'
 
 class CustomLogger < Logger
+  COLORS = {
+    'DEBUG'   => '0;37', # gray
+    'INFO'    => '0;32', # green
+    'WARN'    => '0;33', # yellow
+    'ERROR'   => '0;31', # red
+    'FATAL'   => '1;31', # light red
+    'UNKNOWN' => '1;35'  # light purple
+  }
+
   def initialize(logdev = STDERR, **args)
     super(logdev, args)
 
@@ -35,7 +45,7 @@ class CustomLogger < Logger
     self.formatter = proc do |severity, timestamp, progname, msg|
       format("%s %s(%d) [%s] %s: %s\n",
              timestamp.strftime('%FT%T.%LZ'),
-             $PROGRAM_NAME,
+             progname,
              Process.pid,
              Time.at(timestamp.utc - START_TIME + (3600 * 23))
                  .strftime('%M:%S.%Lms'),
@@ -44,25 +54,10 @@ class CustomLogger < Logger
     end
   end
 
-  private
-
   def self.color(severity)
-    color = case severity
-            when 'DEBUG'
-              '0;37' # gray
-            when 'INFO'
-              '0;32' # green
-            when 'WARN'
-              '0;33' # yellow
-            when 'ERROR'
-              '0;31' # red
-            when 'FATAL'
-              '1;31' # light red
-            when 'UNKNOWN'
-              '1;35' # light purple
-            else
-              raise "invalid logger severity: #{severity.inspect}"
-            end
+    color = COLORS[severity]
+    raise "invalid logger severity: #{severity.inspect}" if color.nil?
+
     "\e[#{color}m#{severity}\e[0;0m"
   end
 end
@@ -71,6 +66,8 @@ class Settings < OpenStruct
   USER_HOST_RG = /^(([a-z0-9_-]+(\.[a-z0-9_-]+)*)@([a-z0-9_-]+(\.[a-z0-9_-]+)*)|
                     vagrant)$/x
 
+  # rubocop:disable Metrics/MethodLength
+  # rubocop:disable Metrics/CyclomaticComplexity
   def self.parse!(args, logger)
     settings = self.new
     settings.logger = logger
@@ -124,9 +121,14 @@ Usage: #{opts.program_name} [options] user@host
         settings.debug = bool
       end
 
-      opts.on('-t', '--[no]-dry-run', 'run but only print commands') do |bool|
+      opts.on('-t', '--[no-]dry-run', 'run but only print commands') do |bool|
         settings.logger.debug "dry run mode set to #{bool}"
         settings.test = bool
+      end
+
+      opts.on('-p', '--[no-]prompt', 'enable pry console at exit') do |bool|
+        settings.logger.debug "at exit pry console set to #{bool}"
+        settings.console = bool
       end
 
       opts.on_tail('-h', '--help', 'print help (this message) and exit') do
@@ -140,7 +142,7 @@ Usage: #{opts.program_name} [options] user@host
       end
     end
 
-    settings.banner = "#{settings.option_parser.to_s}\n"
+    settings.banner = "#{settings.option_parser}\n"
 
     args = settings.option_parser.parse!(args)
     settings.error("wrong user@host argument: #{args.inspect}") \
@@ -151,6 +153,8 @@ Usage: #{opts.program_name} [options] user@host
     settings.output_directory ||= (Pathname.new(__dir__) + 'output')
     settings
   end
+  # rubocop:enable Metrics/CyclomaticComplexity
+  # rubocop:enable Metrics/MethodLength
 
   def error(message)
     STDERR.puts <<-EOS
@@ -176,16 +180,26 @@ class CommandController
   end
 
   def run_local(cmd, sudo: @settings.sudo, nolog: false)
+    if @settings.test
+      return '<dry-run>'
+    end
+
     run_cmd cmd, sudo: sudo, nolog: nolog
   end
 
   def run_remote(cmd, sudo: @settings.sudo, nolog: false)
+    if @settings.test
+      return '<dry-run>'
+    end
+
     ::Net::SSH.start(*ssh_opts) do |ssh|
       run_cmd cmd, sudo: sudo, nolog: nolog, ssh: ssh
     end
   end
 
   def check_access(command = 'cat /etc/passwd', sudo: false)
+    return true if @settings.test
+
     begin
       run_remote(command, sudo: sudo)
       true
@@ -200,6 +214,8 @@ class CommandController
   end
 
   def root?(sudo: (@settings.sudo || false))
+    return true if @settings.test
+
     run_remote('id -u', sudo: sudo) == '0'
   end
 
@@ -246,15 +262,16 @@ class CommandController
         logger: nil } ]
   end
 
+  # rubocop:disable Metrics/CyclomaticComplexity
   def run_cmd(cmd, sudo: @settings.sudo, nolog: false, ssh: nil)
     orig_cmd = cmd.strip
     cmd = sanitize_cmd orig_cmd, sudo: sudo
     log.debug "\e[1;33m#{ssh ? :remote : ''}\e[0;0m> \e[1;36m#{cmd}\e[0;0m"
-    stdout, stderr, status, sig = if ssh
-                                    ssh_exec_cmd(ssh, cmd, nolog)
-                                  else
-                                    exec_cmd(cmd, nolog)
-                                  end
+    stdout, stderr, status, _sig = if ssh
+                                     ssh_exec_cmd(ssh, cmd, nolog)
+                                   else
+                                     exec_cmd(cmd, nolog)
+                                   end
     unless status == 0
       log.error(stdout) unless stdout.empty?
       log.fatal(stderr) unless stderr.empty?
@@ -262,6 +279,7 @@ class CommandController
     end
     stdout
   end
+  # rubocop:enable Metrics/CyclomaticComplexity
 
   def sanitize_cmd(cmd, sudo: @settings.sudo)
     'LC_ALL=C LANG=C DEBIAN_FRONTEND=noninteractive ' +
@@ -270,13 +288,13 @@ class CommandController
 
   def ssh_exec_cmd(ssh, cmd, nolog)
     out, err, status, signal = [], [], nil, nil
-    channel = ssh.open_channel do |channel|
-      channel.exec(cmd) do |ch, success|
+    channel = ssh.open_channel do |chan|
+      chan.exec(cmd) do |ch, success|
         raise "could not execute command #{cmd.inspect}" unless success
         log_stream_from_channel(out, ch, :on_data, :stdout, nolog)
         log_stream_from_channel(err, ch, :on_extended_data, :stderr, nolog)
-        ch.on_request('exit-status') { |c, data| status = data.read_long }
-        ch.on_request('exit-signal') { |c, data| signal = data.read_long }
+        ch.on_request('exit-status') { |_c, data| status = data.read_long }
+        ch.on_request('exit-signal') { |_c, data| signal = data.read_long }
         ch.on_close { log.debug 'ssh cmd exec done' }
       end
     end
@@ -384,6 +402,7 @@ class Prober
     initialize_output_directory!
     build_base_packages_list!
 
+    # rubocop:disable Lint/RescueException
     begin
       STEPS.each { |step| run_step!(step) }
     rescue Exception => exception
@@ -391,6 +410,7 @@ class Prober
       log.fatal(exception.backtrace.join("\n"))
       exit(-1)
     end
+    # rubocop:enable Lint/RescueException
   end
 
   def store_directory
@@ -431,6 +451,7 @@ class Prober
     cruft.map { |k, v| [k.to_sym, v.size ] }.to_h
   end
 
+  # rubocop:disable Metrics/CyclomaticComplexity
   def cruft
     return @cruft if @cruft
 
@@ -447,12 +468,13 @@ class Prober
        when /^    (.+)$/
          @cruft[key] << Regexp.last_match(1).lstrip
        else
-         raise "unparsable #{line.inspect}"
+         raise "unparsable #{line.inspect}" unless @settings.test
        end
     end
 
     @cruft
   end
+  # rubocop:enable Metrics/CyclomaticComplexity
 
   def results
     { cruft: cruft, packages_diff: packages_diff }
@@ -468,6 +490,7 @@ class Prober
     @logger
   end
 
+  # rubocop:disable Metrics/CyclomaticComplexity
   def run_step!(hash)
     name = hash[:name]
     log.info("starting #{name} step…")
@@ -476,7 +499,7 @@ class Prober
                             nolog: (hash[:nolog] || false) }]
 
     data = @steps_data[name] =
-      hash[:local] ? cc.run_local(*params) : cc.run_remote(*params)
+        hash[:local] ? cc.run_local(*params) : cc.run_remote(*params)
 
     case hash[:store]
     when :common
@@ -486,6 +509,7 @@ class Prober
     end
     log.info("#{name} step finished")
   end
+  # rubocop:enable Metrics/CyclomaticComplexity
 
   def initialize_output_directory!
     unless store_directory.exist?
@@ -504,7 +528,7 @@ class Prober
              --include=openssh-server
              --print-debs
              #{settings.debian_dist}
-             #{Pathname.new('/tmp') + $PROGRAM_NAME}).join(' ')
+             /tmp/#{SecureRandom.hex}).join(' ')
 
     STEPS.unshift({ name: base_packages_symbol,
                     local: true,
@@ -524,6 +548,8 @@ if __FILE__ == $0
     reports: prober.reports
   })
 
-  require 'pry'
-  Pry.start
+  if prober.settings.console
+    require 'pry'
+    Pry.start
+  end
 end
