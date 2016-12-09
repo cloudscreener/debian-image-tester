@@ -26,4 +26,12 @@ Vagrant.configure(2) do |config|
     # Disable audio
     vb.customize ['modifyvm', :id, '--audio',    'none']
   end
+
+  config.vm.provider :docker do |docker|
+    docker.dockerfile      = 'vagrant_unsecure_sshd.Dockerfile'
+    docker.image           = 'cloudscreener:dit_vagrant_unsecure_sshd'
+    docker.has_ssh         = true
+    docker.remains_running = true
+    docker.build_args      = %w(DEB_DIST=jessie)
+  end
 end
